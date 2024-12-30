@@ -6,16 +6,44 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <PubSubClient.h>
+#include <Wire.h>
+#include <HTS221Sensor.h>
 
 // Global Variables
 Config storedConfig;
+HTS221Sensor sensor(&Wire);
+
+
+// Initialize the sensor
+void initializeSensor() {
+    Serial.println("[DEBUG] Initializing HTS221 sensor...");
+
+    // Initialize I2C with specified SDA and SCL pins
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Serial.println("[DEBUG] I2C initialized successfully!");
+
+    // Initialize the HTS221 sensor
+    if (sensor.begin() != HTS221_STATUS_OK) {
+        Serial.println("[ERROR] Failed to initialize HTS221 sensor!");
+        while (1) delay(1000); // Halt if initialization fails
+    }
+    Serial.println("[DEBUG] HTS221 sensor initialized successfully!");
+
+    // Enable the HTS221 sensor
+    if (sensor.Enable() != HTS221_STATUS_OK) {
+        Serial.println("[ERROR] Failed to enable HTS221 sensor!");
+        while (1) delay(1000); // Halt if enabling fails
+    }
+    Serial.println("[DEBUG] HTS221 sensor enabled successfully!");
+}
+
 
 // For testing with a public broker that doesn't require TLS:
 // Example: HiveMQ public broker
 // MQTT_SERVER = "broker.hivemq.com"
 // MQTT_PORT = 1883
-const char* mqtt_publish_topic    = "/gms/user/5d62be50-ec8f-48f4-b576-a240e42db065";
-const char* mqtt_subscribe_topic  = "/gms/user/5d62be50-ec8f-48f4-b576-a240e42db065";
+const char* mqtt_publish_topic    = "/gms/user/5d62be50-ec8f-48f4-b576-a240e42db066";
+const char* mqtt_subscribe_topic  = "/gms/user/5d62be50-ec8f-48f4-b576-a240e42db066";
 
 // Initialize MQTT Client with a plain WiFiClient
 WiFiClient espClient;
@@ -232,4 +260,606 @@ void publishMessage(const char* topic, const char* message) {
     Serial.print("Failed to publish message to topic ");
     Serial.println(topic);
   }
+}
+
+SensorData readSensorData() {
+    SensorData data;
+
+    // Read humidity and temperature
+    float temperature = 0.0f;
+    float humidity = 0.0f;
+
+    if (sensor.GetHumidity(&humidity) != HTS221_STATUS_OK ||
+        sensor.GetTemperature(&temperature) != HTS221_STATUS_OK) {
+        Serial.println("Failed to read sensor data!");
+        data.success = false;
+        return data;
+    }
+
+    data.temperature = temperature;
+    data.humidity = humidity;
+    data.success = true;
+
+    Serial.print("Temperature: ");
+    Serial.print(data.temperature);
+    Serial.println(" °C");
+
+    Serial.print("Humidity: ");
+    Serial.print(data.humidity);
+    Serial.println(" %");
+
+    return data;
+}
+
+void sendHeartbeat() {
+    Serial.println("[DEBUG] Sending heartbeat signal to STM via I²C...");
+
+    // Trigger START condition and check response
+    Wire.beginTransmission(0x18); // STM32 I²C Address (try 0x08, 0x18, etc.)
+    Wire.write("HEARTBEAT");
+    byte error = Wire.endTransmission();
+
+    if (error == 0) {
+        Serial.println("[INFO] Heartbeat signal sent successfully via I²C!");
+    } else {
+        Serial.print("[ERROR] Failed to send heartbeat, error code: ");
+        Serial.println(error);
+    }
+}
+
+void wakeUpSTM32() {
+    Serial.println("[DEBUG] Triggering wake-up pin...");
+
+    pinMode(16, OUTPUT); // Example GPIO pin, adjust if needed
+    digitalWrite(16, HIGH);
+    delay(100);  // Hold high for 100ms
+    digitalWrite(16, LOW);
+
+    Serial.println("[INFO] Wake-up signal sent via GPIO!");
+}
+
+uint8_t findI2CAddress() {
+    Serial.println("[DEBUG] Scanning I²C bus for devices...");
+
+    uint8_t foundAddress = 0x00; // Default to 0x00 (no device found)
+    byte error;
+    int nDevices = 0;
+
+    // Loop through all possible I²C addresses (1 to 127)
+    for (uint8_t address = 1; address < 127; address++) {
+        Wire.beginTransmission(address);
+        error = Wire.endTransmission();
+
+        if (error == 0) {
+            Serial.print("[INFO] I²C device found at address 0x");
+            Serial.println(address, HEX);
+            foundAddress = address;
+            nDevices++;
+        } else if (error == 4) {
+            Serial.print("[ERROR] Unknown error at address 0x");
+            Serial.println(address, HEX);
+        }
+    }
+
+    if (nDevices == 0) {
+        Serial.println("[WARNING] No I²C devices found on the bus.");
+    } else {
+        Serial.print("[INFO] Total I²C devices found: ");
+        Serial.println(nDevices);
+    }
+
+    return foundAddress;
+}
+
+void setHTS221ThresholdsManual() {
+    Serial.println("[DEBUG] Configuring HTS221 thresholds manually...");
+
+    Wire.beginTransmission(0x5F); // HTS221 default address
+
+    // Write humidity threshold
+    Wire.write(0x33); // Humidity high threshold register
+    Wire.write(50);   // Example: 50% threshold
+
+    // Write temperature threshold
+    Wire.write(0x34); // Temperature high threshold register
+    Wire.write(30);   // Example: 30°C threshold
+
+    byte error = Wire.endTransmission();
+
+    if (error == 0) {
+        Serial.println("[INFO] HTS221 thresholds configured successfully!");
+    } else {
+        Serial.print("[ERROR] Failed to set thresholds, error code: ");
+        Serial.println(error);
+    }
+}
+
+void scanI2CDevices() {
+  Serial.println("[DEBUG] Scanning I²C bus for devices...");
+
+  int nDevices = 0;
+
+  for (uint8_t address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission() == 0) {
+      Serial.print("[INFO] Found I²C device at address 0x");
+      Serial.println(address, HEX);
+
+      dumpI2CRegisters(address); // Dump registers for this device
+      nDevices++;
+    }
+  }
+
+  if (nDevices == 0) {
+    Serial.println("[WARNING] No I²C devices found on the bus.");
+  } else {
+    Serial.print("[INFO] Total I²C devices found: ");
+    Serial.println(nDevices);
+  }
+}
+
+void testI2CBusHealth() {
+    Wire.beginTransmission(0x5F);
+    byte error = Wire.endTransmission();
+
+    if (error == 0) {
+        Serial.println("[INFO] HTS221 detected successfully on I²C bus!");
+    } else {
+        Serial.print("[ERROR] I²C communication error: ");
+        Serial.println(error);
+    }
+}
+
+void forceHTS221Init() {
+    Wire.beginTransmission(0x5F);
+    Wire.write(0x20); // CTRL_REG1
+    Wire.write(0x85); // Enable sensor, 1 Hz mode
+    Wire.endTransmission();
+    delay(100);
+
+    Wire.beginTransmission(0x5F);
+    Wire.write(0x21); // CTRL_REG2
+    Wire.write(0x01); // Trigger one-shot mode
+    Wire.endTransmission();
+
+    Serial.println("[INFO] HTS221 Initialization Commands Sent");
+}
+
+void readHTS221Raw() {
+  Wire.beginTransmission(0x5F); // HTS221 Address
+  Wire.write(0x28 | 0x80); // Humidity register (0x28) with auto-increment (0x80)
+  Wire.endTransmission();
+  Wire.requestFrom(0x5F, 4);
+
+  if (Wire.available() == 4) {
+      uint8_t humL = Wire.read(); // Humidity low byte
+      uint8_t humH = Wire.read(); // Humidity high byte
+      uint8_t tempL = Wire.read(); // Temperature low byte
+      uint8_t tempH = Wire.read(); // Temperature high byte
+
+      float humidity = ((humH << 8) | humL) / 65536.0 * 100.0;
+      float temperature = ((tempH << 8) | tempL) / 65536.0 * 120.0 - 40.0;
+
+      Serial.print("Raw Humidity: ");
+      Serial.print(humidity);
+      Serial.println(" %");
+
+      Serial.print("Raw Temperature: ");
+      Serial.print(temperature);
+      Serial.println(" °C");
+  } else {
+      Serial.println("[ERROR] Failed to read raw HTS221 data!");
+  }
+}
+
+void dumpI2CRegisters(uint8_t deviceAddress) {
+  Serial.print("[INFO] Dumping registers for device at 0x");
+  Serial.println(deviceAddress, HEX);
+
+  for (uint8_t reg = 0x00; reg <= 0xFF; reg++) {
+    Wire.beginTransmission(deviceAddress);
+    Wire.write(reg); // Select register
+    if (Wire.endTransmission() == 0) {
+      Wire.requestFrom(deviceAddress, (uint8_t)1);
+
+      if (Wire.available()) {
+        uint8_t value = Wire.read();
+        Serial.print("Register 0x");
+        Serial.print(reg, HEX);
+        Serial.print(": 0x");
+        Serial.println(value, HEX);
+      } else {
+        Serial.print("Register 0x");
+        Serial.print(reg, HEX);
+        Serial.println(": [No Data]");
+      }
+    } else {
+      Serial.print("Register 0x");
+      Serial.print(reg, HEX);
+      Serial.println(": [Write Error]");
+    }
+  }
+  Serial.println("[INFO] Register dump complete.\n");
+}
+
+void scanI2C(uint8_t sda, uint8_t scl) {
+  Serial.print("[DEBUG] Scanning I²C bus on SDA: ");
+  Serial.print(sda);
+  Serial.print(", SCL: ");
+  Serial.println(scl);
+
+  Wire.begin(sda, scl);
+  for (uint8_t address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission() == 0) {
+      Serial.print("[INFO] Found device at 0x");
+      Serial.println(address, HEX);
+    }
+  }
+}
+
+void runFullDiagnostics() {
+  Serial.println("\n🔍 [DEBUG] Starting Full System Diagnostics...\n");
+  
+  // ---------- GPIO Pin Probing ----------
+  Serial.println("🟢 [GPIO] Testing All GPIO Pins...");
+  for (int pin = 0; pin <= 16; pin++) {
+      if (pin == 1 || pin == 3) continue; // Skip TX/RX
+      pinMode(pin, OUTPUT);
+      digitalWrite(pin, HIGH);
+      Serial.printf("[GPIO] GPIO%d set to HIGH\n", pin);
+      delay(200);
+      digitalWrite(pin, LOW);
+      Serial.printf("[GPIO] GPIO%d set to LOW\n", pin);
+      delay(200);
+  }
+  Serial.println("✅ [GPIO] GPIO Test Complete.\n");
+
+  // ---------- I²C Bus Health ----------
+  Serial.println("🟢 [I²C] Testing I²C Bus Health...");
+  Wire.begin(ALT_SDA_PIN, ALT_SCL_PIN);
+  Wire.beginTransmission(0x5F); // HTS221 Address
+  byte error = Wire.endTransmission();
+  if (error == 0) {
+      Serial.println("✅ [I²C] HTS221 detected successfully on alternate pins!");
+  } else {
+      Serial.printf("❌ [I²C] HTS221 I²C communication error: %d\n", error);
+  }
+
+  // ---------- I²C Register Dump ----------
+  Serial.println("🟢 [I²C] Dumping All Registers from 0x00 to 0xFF...");
+  for (uint8_t reg = 0x00; reg <= 0xFF; reg++) {
+      Wire.beginTransmission(0x5F);
+      Wire.write(reg);
+      Wire.endTransmission();
+      Wire.requestFrom(0x5F, 1);
+
+      if (Wire.available()) {
+          uint8_t value = Wire.read();
+          Serial.printf("[I²C] Register 0x%02X: 0x%02X\n", reg, value);
+      } else {
+          Serial.printf("❌ [I²C] No Response from Register 0x%02X\n", reg);
+      }
+  }
+  Serial.println("✅ [I²C] I²C Register Dump Complete.\n");
+
+  // ---------- I²C Write Test ----------
+  Serial.println("🟢 [I²C] Attempting to Write to Registers...");
+  for (uint8_t reg = 0x00; reg <= 0xFF; reg++) {
+      Wire.beginTransmission(0x5F);
+      Wire.write(reg);
+      Wire.write(0xFF); // Arbitrary write value
+      if (Wire.endTransmission() == 0) {
+          Serial.printf("✅ [I²C] Wrote to Register 0x%02X\n", reg);
+      } else {
+          Serial.printf("❌ [I²C] Failed to Write to Register 0x%02X\n", reg);
+      }
+      delay(50); // Prevent I²C flood
+  }
+  Serial.println("✅ [I²C] I²C Write Test Complete.\n");
+
+  // ---------- UART Sniffing ----------
+  Serial.println("🟢 [UART] Sniffing UART Communication...");
+  unsigned long uartStartTime = millis();
+  while (millis() - uartStartTime < 5000) { // 5-second UART Sniffing
+      if (Serial.available()) {
+          char c = Serial.read();
+          Serial.print(c);
+      }
+  }
+  Serial.println("\n✅ [UART] UART Sniffing Complete.\n");
+
+  // ---------- UART Fuzzing ----------
+  Serial.println("🟢 [UART] Fuzzing UART Communication...");
+  for (uint8_t command = UART_MIN; command <= UART_MAX; command++) {
+      Serial.write(command);
+      delay(50);
+      Serial.printf("[UART] Sent Command: 0x%02X\n", command);
+  }
+  Serial.println("✅ [UART] UART Fuzzing Complete.\n");
+
+  // ---------- GPIO Wake Behavior ----------
+  Serial.println("🟢 [GPIO] Observing GPIO Wake-Up Behavior...");
+  pinMode(16, INPUT);
+  if (digitalRead(16) == HIGH) {
+      Serial.println("✅ [GPIO] GPIO16 detected HIGH (Wake-Up Triggered)");
+  } else {
+      Serial.println("❌ [GPIO] GPIO16 not triggered.");
+  }
+
+  Serial.println("\n✅ [DEBUG] Full Diagnostics Complete!");
+}
+
+
+void testAllGPIOPins() {
+  Serial.println("\n🔍 [TEST] Starting Systematic GPIO Test...");
+
+  // List of GPIOs to test (excluding TX/RX and reserved pins)
+  int gpioPins[] = {0, 2, 4, 5, 12, 13, 14, 15, 16};
+  int pinCount = sizeof(gpioPins) / sizeof(gpioPins[0]);
+
+  for (int i = 0; i < pinCount; i++) {
+      int pin = gpioPins[i];
+      
+      Serial.printf("\n🟢 [GPIO TEST] Testing GPIO%d...\n", pin);
+      pinMode(pin, OUTPUT);
+
+      // Step 1: Set GPIO HIGH
+      Serial.printf("[GPIO%d] Setting HIGH...\n", pin);
+      digitalWrite(pin, HIGH);
+      delay(2000); // Wait 2 seconds to observe behavior
+
+      // Step 2: Set GPIO LOW
+      Serial.printf("[GPIO%d] Setting LOW...\n", pin);
+      digitalWrite(pin, LOW);
+      delay(2000); // Wait 2 seconds to observe behavior
+
+      // Step 3: Pulse GPIO (HIGH -> LOW -> HIGH)
+      Serial.printf("[GPIO%d] Pulsing HIGH-LOW-HIGH...\n", pin);
+      digitalWrite(pin, HIGH);
+      delay(500);
+      digitalWrite(pin, LOW);
+      delay(500);
+      digitalWrite(pin, HIGH);
+      delay(2000); // Wait 2 seconds to observe behavior
+
+      Serial.printf("✅ [GPIO%d] Test Complete. Moving to next pin...\n", pin);
+
+      // Clear pin state
+      digitalWrite(pin, LOW);
+      pinMode(pin, INPUT);
+  }
+
+  Serial.println("\n✅ [TEST COMPLETE] All GPIO pins tested systematically.\n");
+}
+
+void readAllGPIOPins() {
+  Serial.println("\n🔍 [TEST] Starting GPIO Pin Listening Test...");
+
+  // List of GPIOs to test (excluding TX/RX and reserved pins)
+  int gpioPins[] = {0, 2, 4, 5, 12, 13, 14, 15, 16};
+  int pinCount = sizeof(gpioPins) / sizeof(gpioPins[0]);
+
+  for (int i = 0; i < pinCount; i++) {
+      int pin = gpioPins[i];
+      
+      Serial.printf("\n🟢 [GPIO READ] Listening on GPIO%d...\n", pin);
+      pinMode(pin, INPUT);
+      
+      for (int j = 0; j < 10; j++) { // Read each pin 10 times
+          int state = digitalRead(pin);
+          Serial.printf("[GPIO%d] State: %s\n", pin, state == HIGH ? "HIGH" : "LOW");
+          delay(500); // Half-second delay to observe pin state
+      }
+      
+      Serial.printf("✅ [GPIO%d] Listening Complete. Moving to next pin...\n", pin);
+  }
+
+  Serial.println("\n✅ [TEST COMPLETE] All GPIO pins listened systematically.\n");
+}
+
+void pulseLowGPIOPins() {
+    Serial.println("\n🔍 [ULTIMATE TEST] Beginning Full GPIO, UART, and I²C Exploration...");
+
+    // List of GPIOs to test (excluding TX/RX and reserved pins)
+    int gpioPins[] = {0, 2, 4, 5, 12, 13, 14, 15, 16};
+    int pinCount = sizeof(gpioPins) / sizeof(gpioPins[0]);
+
+    // 🟢 STEP 1: Flick each GPIO pin ON and OFF
+    Serial.println("\n🟢 [STEP 1] Flicking GPIO Pins ON and OFF...");
+    for (int i = 0; i < pinCount; i++) {
+        int pin = gpioPins[i];
+        Serial.printf("[GPIO%d] Flicking ON and OFF...\n", pin);
+        pinMode(pin, OUTPUT);
+        for (int j = 0; j < 3; j++) {
+            digitalWrite(pin, HIGH);
+            delay(500);
+            digitalWrite(pin, LOW);
+            delay(500);
+        }
+        pinMode(pin, INPUT);
+        delay(500);
+    }
+
+    // 🟢 STEP 2: Pulse Each GPIO Pin
+    Serial.println("\n🟢 [STEP 2] Pulsing GPIO Pins...");
+    for (int i = 0; i < pinCount; i++) {
+        int pin = gpioPins[i];
+        Serial.printf("[GPIO%d] Pulsing HIGH-LOW-HIGH...\n", pin);
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, HIGH);
+        delay(500);
+        digitalWrite(pin, LOW);
+        delay(500);
+        digitalWrite(pin, HIGH);
+        delay(500);
+        pinMode(pin, INPUT);
+        delay(500);
+    }
+
+    // 🟢 STEP 3: Monitor UART During Pin Tests
+    Serial.println("\n🟢 [STEP 3] Monitoring UART During GPIO Tests...");
+    for (int i = 0; i < gpioPins[i]; i++) {
+        int pin = gpioPins[i];
+        Serial.printf("[GPIO%d] Pulsing with UART Monitoring...\n", pin);
+        pinMode(pin, OUTPUT);
+
+        digitalWrite(pin, HIGH);
+        delay(500);
+        digitalWrite(pin, LOW);
+        delay(500);
+        digitalWrite(pin, HIGH);
+        delay(500);
+
+        Serial.println("[UART] Monitoring UART for 3 seconds...");
+        unsigned long startMillis = millis();
+        while (millis() - startMillis < 3000) {
+            if (Serial.available()) {
+                char c = Serial.read();
+                Serial.print(c);
+            }
+        }
+
+        pinMode(pin, INPUT);
+        delay(500);
+    }
+
+    // 🟢 STEP 4: Monitor I²C During GPIO Tests
+    Serial.println("\n🟢 [STEP 4] Monitoring I²C During GPIO Tests...");
+    Wire.begin(); // Ensure I2C is initialized
+    for (int i = 0; i < gpioPins[i]; i++) {
+        int pin = gpioPins[i];
+        Serial.printf("[GPIO%d] Pulsing with I²C Monitoring...\n", pin);
+        pinMode(pin, OUTPUT);
+
+        digitalWrite(pin, HIGH);
+        delay(500);
+        digitalWrite(pin, LOW);
+        delay(500);
+        digitalWrite(pin, HIGH);
+        delay(500);
+
+        Serial.println("[I²C] Scanning for devices...");
+        for (uint8_t address = 1; address < 127; address++) {
+            Wire.beginTransmission(address);
+            byte error = Wire.endTransmission();
+            if (error == 0) {
+                Serial.printf("[I²C] Device found at address 0x%X\n", address);
+            }
+        }
+
+        pinMode(pin, INPUT);
+        delay(500);
+    }
+
+    // 🟢 STEP 5: Test GPIO Pin Combinations
+    Serial.println("\n🟢 [STEP 5] Testing GPIO Pin Combinations...");
+    for (int i = 0; i < pinCount; i++) {
+        for (int j = i + 1; j < pinCount; j++) {
+            int pinA = gpioPins[i];
+            int pinB = gpioPins[j];
+
+            Serial.printf("[COMBO] Pulsing GPIO%d & GPIO%d...\n", pinA, pinB);
+            pinMode(pinA, OUTPUT);
+            pinMode(pinB, OUTPUT);
+
+            digitalWrite(pinA, HIGH);
+            digitalWrite(pinB, HIGH);
+            delay(500);
+            digitalWrite(pinA, LOW);
+            digitalWrite(pinB, LOW);
+            delay(500);
+            digitalWrite(pinA, HIGH);
+            digitalWrite(pinB, HIGH);
+            delay(500);
+
+            Serial.println("[COMBO] Monitoring UART for 3 seconds...");
+            unsigned long startMillis = millis();
+            while (millis() - startMillis < 3000) {
+                if (Serial.available()) {
+                    char c = Serial.read();
+                    Serial.print(c);
+                }
+            }
+
+            pinMode(pinA, INPUT);
+            pinMode(pinB, INPUT);
+            delay(500);
+        }
+    }
+
+    // 🟢 STEP 6: Test GPIO with Different Durations
+    Serial.println("\n🟢 [STEP 6] Testing GPIO Durations...");
+    for (int i = 0; i < pinCount; i++) {
+        int pin = gpioPins[i];
+        Serial.printf("[DURATION] Holding GPIO%d HIGH for 5 seconds...\n", pin);
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, HIGH);
+        delay(5000);
+        digitalWrite(pin, LOW);
+        delay(1000);
+        pinMode(pin, INPUT);
+        delay(500);
+    }
+
+    Serial.println("\n✅ [ULTIMATE TEST COMPLETE] All GPIO, UART, and I²C tests completed.\n");
+}
+
+void simulateButtonPress() {
+    Serial.println("[TEST] Simulating Button Press on GPIO5...");
+    pinMode(5, OUTPUT);
+    digitalWrite(5, LOW); delay(100);
+    digitalWrite(5, HIGH); delay(500);
+    digitalWrite(5, LOW); delay(100);
+    Serial.println("[TEST] Button Press Simulation Complete");
+}
+
+void advancedButtonSequence() {
+    Serial.println("[TEST] Testing Advanced GPIO5 Sequences...");
+    pinMode(5, OUTPUT);
+
+    // Quick toggle
+    for (int i = 0; i < 5; i++) {
+        digitalWrite(5, HIGH); delay(100);
+        digitalWrite(5, LOW); delay(100);
+    }
+
+    // Long hold
+    digitalWrite(5, HIGH); delay(3000); // 3-second hold
+    digitalWrite(5, LOW); delay(1000);
+
+    // Combo toggle with GPIO4
+    pinMode(4, OUTPUT);
+    digitalWrite(5, HIGH); digitalWrite(4, HIGH); delay(500);
+    digitalWrite(5, LOW); digitalWrite(4, LOW); delay(500);
+
+    Serial.println("[TEST] Advanced Sequence Complete");
+}
+
+void gpio5WithWakeUp() {
+    Serial.println("[TEST] Testing GPIO5 + GPIO16 Wake-Up Combo...");
+    pinMode(5, OUTPUT);
+    pinMode(16, OUTPUT);
+
+    digitalWrite(5, HIGH); delay(200);
+    digitalWrite(16, HIGH); delay(200);
+    digitalWrite(5, LOW); delay(200);
+    digitalWrite(16, LOW); delay(200);
+
+    Serial.println("[TEST] Combo Complete");
+}
+
+void bruteForceI2CRegisters(uint8_t deviceAddress) {
+    Serial.printf("[I²C] Brute-Forcing Registers on 0x%02X...\n", deviceAddress);
+    for (uint8_t reg = 0x00; reg <= 0xFF; reg++) {
+        Wire.beginTransmission(deviceAddress);
+        Wire.write(reg);
+        if (Wire.endTransmission() == 0) {
+            Wire.requestFrom(deviceAddress, (uint8_t)1);
+            if (Wire.available()) {
+                uint8_t value = Wire.read();
+                Serial.printf("[I²C] Register 0x%02X: 0x%02X\n", reg, value);
+            }
+        }
+    }
 }

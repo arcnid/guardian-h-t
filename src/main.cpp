@@ -24,6 +24,9 @@ const unsigned long reconnectInterval = 10000;
 unsigned long lastWifiRetryAttempt = 0;
 const unsigned long wifiRetryInterval = 30000; // 30 seconds
 
+
+unsigned long lastHeartbeatTime = 0;
+const unsigned long heartbeatInterval = 60000; // 1 minute
 // Function to start Access Point
 void startAccessPoint() {
   // Start the AP
@@ -109,11 +112,19 @@ void setup() {
       Serial.println("Failed to Connect to MQTT Broker.");
     }
   }
+
+  initializeSensor();
+
+  
+
 }
 
 void loop() {
   // Handle incoming client requests
   server.handleClient();
+
+
+
 
   // If we have stored credentials (user exists) but WiFi is not connected, periodically attempt to reconnect
   if (doesUserExist && (WiFi.status() != WL_CONNECTED)) {
@@ -168,6 +179,14 @@ void loop() {
       publishMessage(mqtt_publish_topic, status.c_str());
     }
   }
+
+  unsigned long currentMillis = millis();
+    if (currentMillis - lastHeartbeatTime >= heartbeatInterval) {
+        lastHeartbeatTime = currentMillis;
+        sendHeartbeat();
+    }
+
+
 
   // Optionally, log free heap memory
   // Serial.printf("Free Heap: %u bytes\n", ESP.getFreeHeap());

@@ -8,9 +8,6 @@
 String scanResults;
 bool scanCompleted = false;
 
-
-
-
 void setupApiRoutes(ESP8266WebServer &server) {
     server.on("/", HTTP_GET, [&server]() {
         Serial.println("Hit /");
@@ -26,8 +23,6 @@ void setupApiRoutes(ESP8266WebServer &server) {
         digitalWrite(SHELLY_BUILTIN_LED, HIGH);
         sendResponse(server, 200, "{\"status\":\"LED turned off\"}");
     });
-
-    #include <ArduinoJson.h>
 
     server.on("/scanWifi", HTTP_GET, [&server]() {
         Serial.println("Starting Wi-Fi scan...");
@@ -188,6 +183,111 @@ void setupApiRoutes(ESP8266WebServer &server) {
     });
 
 
+    server.on("/readSensor", HTTP_GET, [&server]() {
+        Serial.println("[API] /readSensor endpoint hit");
+
+        // Read sensor data
+        SensorData data = readSensorData();
+
+        // Prepare JSON response
+        StaticJsonDocument<256> doc;
+
+        if (data.success) {
+            doc["status"] = "success";
+            doc["temperature"] = data.temperature;
+            doc["humidity"] = data.humidity;
+        } else {
+            doc["status"] = "error";
+            doc["message"] = "Failed to read sensor data";
+        }
+
+        testI2CBusHealth();
+
+        forceHTS221Init();
+
+        readHTS221Raw();
+
+        String jsonResponse;
+        serializeJson(doc, jsonResponse);
+
+        // Send JSON response
+        sendResponse(server, 200, jsonResponse);
+
+        Serial.println("[API] /readSensor response sent");
+    });
+
+
+
+    server.on("/readAddress", HTTP_GET, [&server]() {
+        Serial.println("[API] /readAddress endpoint hit");
+
+        // Find the I²C address
+        uint8_t address = findI2CAddress();
+
+        // Create a JSON response
+        StaticJsonDocument<128> jsonResponse;
+        if (address != 0x00) {
+            Serial.print("[INFO] Detected STM32 I²C Address: 0x");
+            Serial.println(address, HEX);
+
+            jsonResponse["status"] = "success";
+            jsonResponse["address"] = String("0x") + String(address, HEX);
+        } else {
+            Serial.println("[ERROR] Failed to detect any I²C address for STM32.");
+
+            jsonResponse["status"] = "error";
+            jsonResponse["message"] = "Failed to detect any I²C address.";
+        }
+
+        runFullDiagnostics();
+
+        // Serialize JSON and send the response
+        String response;
+        serializeJson(jsonResponse, response);
+        sendResponse(server, 200, response);
+    });
+
+   server.on("/wake", HTTP_GET, [&server]() {
+        Serial.println("[API] /wake endpoint hit");
+
+        // Create a JSON response object
+        StaticJsonDocument<256> jsonResponse;
+
+        // Attempt to wake up the STM32
+        Serial.println("[DEBUG] Attempting to wake up STM32...");
+        wakeUpSTM32();  // Call the wake-up function
+
+        // Check if the wake-up signal succeeded
+        // Note: GPIO or I²C wake-up doesn't have direct feedback, so we assume success for now
+        jsonResponse["status"] = "success";
+        jsonResponse["message"] = "Wake-up signal sent to STM32";
+
+        // Optionally, check if the STM32 responds after wake-up
+        uint8_t address = findI2CAddress();
+        if (address != 0x00) {
+            jsonResponse["stm32_address_detected"] = true;
+            jsonResponse["stm32_address"] = String("0x") + String(address, HEX);
+            Serial.print("[INFO] STM32 I²C address detected: 0x");
+            Serial.println(address, HEX);
+        } else {
+            jsonResponse["stm32_address_detected"] = false;
+            jsonResponse["stm32_address"] = "Not detected";
+            jsonResponse["error"] = "No response on I²C after wake-up signal.";
+            Serial.println("[ERROR] No I²C address detected after wake-up attempt!");
+        }
+
+        // Serialize JSON and send the response
+        String response;
+        serializeJson(jsonResponse, response);
+        sendResponse(server, 200, response);
+    });
+
+    server.on("/setThresholds", HTTP_GET, [&server]() {
+        // setHTS221ThresholdsManual();
+        
+        pulseLowGPIOPins();
+        sendResponse(server, 200, "{\"message\": \"HTS221 thresholds manually set.\"}");
+    });
 
 
     // --------------------------
@@ -223,6 +323,33 @@ void setupApiRoutes(ESP8266WebServer &server) {
     });
 
     server.on("/connect", HTTP_OPTIONS, [&server]() {
+        server.sendHeader("Access-Control-Allow-Origin", "*");
+        server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        server.send(204);
+    });
+
+    server.on("/readSensor", HTTP_OPTIONS, [&server]() {
+        server.sendHeader("Access-Control-Allow-Origin", "*");
+        server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        server.send(204);
+    });
+
+    server.on("/readAddress", HTTP_OPTIONS, [&server]() {
+        server.sendHeader("Access-Control-Allow-Origin", "*");
+        server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        server.send(204);
+    });
+     server.on("/wake", HTTP_OPTIONS, [&server]() {
+        server.sendHeader("Access-Control-Allow-Origin", "*");
+        server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        server.send(204);
+    });
+
+     server.on("/setThresholds", HTTP_OPTIONS, [&server]() {
         server.sendHeader("Access-Control-Allow-Origin", "*");
         server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
