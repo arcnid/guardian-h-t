@@ -84,5 +84,6 @@ void pulseLowGPIOPins();
 void advancedButtonSequence();
 void gpio5WithWakeUp();
 void bruteForceI2CRegisters(uint8_t deviceAddress);
+void scanI2CBus();
 
 #endif // UTILS_H

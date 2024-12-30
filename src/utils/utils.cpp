@@ -863,3 +863,15 @@ void bruteForceI2CRegisters(uint8_t deviceAddress) {
         }
     }
 }
+void scanI2CBus() {
+    Serial.println("🔍 [I²C SCAN] Scanning for devices...");
+
+    for (uint8_t address = 1; address < 127; address++) {
+        Wire.beginTransmission(address);
+        if (Wire.endTransmission() == 0) {
+            Serial.printf("✅ Device found at address: 0x%02X\n", address);
+        }
+    }
+
+    Serial.println("✅ [I²C SCAN COMPLETE]");
+}
