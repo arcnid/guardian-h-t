@@ -24,11 +24,11 @@ unsigned long lastWifiRetryAttempt = 0;
 const unsigned long wifiRetryInterval = 30000;
 
 unsigned long lastHeartbeatTime = 0;
-const unsigned long heartbeatInterval = 60000;
+const unsigned long heartbeatInterval = 10000;
 
 // I²C Keep-Alive Timer
 unsigned long lastI2CKeepAliveTime = 0;
-const unsigned long i2cKeepAliveInterval = 120000; // 2 minutes
+const unsigned long i2cKeepAliveInterval = 15000; // 2 minutes
 
 // GPIO Constants
 const uint8_t targetI2CAddress = 0x01;
@@ -64,11 +64,23 @@ void setup() {
 
     EEPROM.begin(512);
 
+     hspiSetup();
+
+    // Wake the sensor
+    wakeUpSTM32();
+
+    // Initialize sensor settings
+    sendCmd_PreventSleep();
+    sendCmd_LED(LED_STATUS_BLINK_SLOW);
+
+    // Initialize HTS221 sensor
+    initializeSensor();
+
     pinMode(SHELLY_BUILTIN_LED, OUTPUT);
     digitalWrite(SHELLY_BUILTIN_LED, HIGH);
 
     if (checkForWifiAndUser()) {
-        if (connect(String(storedConfig.ssid), String(storedConfig.password))) {
+        if (connectToWiFi(String(storedConfig.ssid), String(storedConfig.password))) {
             Serial.println("Connected to WiFi successfully.");
             digitalWrite(SHELLY_BUILTIN_LED, HIGH);
         } else {
@@ -120,12 +132,13 @@ void loop() {
     server.handleClient();
     unsigned long currentMillis = millis();
 
+
     // WiFi Reconnect
     if (doesUserExist && (WiFi.status() != WL_CONNECTED)) {
         if (currentMillis - lastWifiRetryAttempt > wifiRetryInterval) {
             lastWifiRetryAttempt = currentMillis;
             Serial.println("Attempting to reconnect to WiFi...");
-            if (connect(String(storedConfig.ssid), String(storedConfig.password))) {
+            if (connectToWiFi(String(storedConfig.ssid), String(storedConfig.password))) {
                 Serial.println("Reconnected to WiFi successfully.");
                 digitalWrite(SHELLY_BUILTIN_LED, HIGH);
                 synchronizeTime();
@@ -168,13 +181,16 @@ void loop() {
     // Heartbeat Signal
     if (currentMillis - lastHeartbeatTime >= heartbeatInterval) {
         lastHeartbeatTime = currentMillis;
-        sendHeartbeat();
+        sensorLoop();
+
     }
 
     // I²C Keep-Alive Every 2 Minutes
-    if (currentMillis - lastI2CKeepAliveTime >= i2cKeepAliveInterval) {
-        lastI2CKeepAliveTime = currentMillis;
-        keepAliveI2C();
-        scanI2CBus();
-    }
+    // if (currentMillis - lastI2CKeepAliveTime >= i2cKeepAliveInterval) {
+    //     lastI2CKeepAliveTime = currentMillis;
+    //     keepAliveI2C();
+    //     //scan the temp and humidity and print it out in a readable format 
+    //      readShellyHTData();
+    // }
+
 }

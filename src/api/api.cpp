@@ -142,7 +142,7 @@ void setupApiRoutes(ESP8266WebServer &server) {
         }
 
         // Attempt to connect to Wi-Fi
-        bool isConnected = connect(ssid, password);
+        bool isConnected = connectToWiFi(ssid, password);
         Serial.println("Just got a response back for isConnected");
         Serial.println(isConnected);
 

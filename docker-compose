@@ -1,0 +1,10 @@
+version: '3'
+services:
+  qtoggleserver:
+    image: qtoggle/qtoggleserver:stable
+    ports:
+      - "8888:8888"
+    volumes:
+      - /path/to/host/qtoggleserver-data:/data
+    environment:
+      - TZ=Europe/Berlin
