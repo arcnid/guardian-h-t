@@ -11,32 +11,22 @@
 #include <SPI.h>
 #include <string.h>   // for memcpy
 #include <stdlib.h>
+#include <cmath>
+#include <ArduinoJson.h>
 
 // Global Variables
 Config storedConfig;
 HTS221Sensor sensor(&Wire);
 
-// Initialize the sensor
-void initializeSensor() {
-    Serial.println("[DEBUG] Initializing HTS221 sensor...");
+String getTopic(){
+    String userId = getUserId();
+    String deviceId = getDeviceId();
 
-    // Initialize I2C with specified SDA and SCL pins
-    Wire.begin(I2C_SDA, I2C_SCL);
-    Serial.println("[DEBUG] I2C initialized successfully!");
 
-    // Initialize the HTS221 sensor
-    if (sensor.begin() != HTS221_STATUS_OK) {
-        Serial.println("[ERROR] Failed to initialize HTS221 sensor!");
-        while (1) delay(1000); // Halt if initialization fails
-    }
-    Serial.println("[DEBUG] HTS221 sensor initialized successfully!");
+    String topic = "gms/" + userId + "/" + deviceId;
 
-    // Enable the HTS221 sensor
-    if (sensor.Enable() != HTS221_STATUS_OK) {
-        Serial.println("[ERROR] Failed to enable HTS221 sensor!");
-        while (1) delay(1000); // Halt if enabling fails
-    }
-    Serial.println("[DEBUG] HTS221 sensor enabled successfully!");
+    return topic;
+
 }
 
 
@@ -44,8 +34,8 @@ void initializeSensor() {
 // Example: HiveMQ public broker
 // MQTT_SERVER = "broker.hivemq.com"
 // MQTT_PORT = 1883
-const char* mqtt_publish_topic    = "/gms/user/5d62be50-ec8f-48f4-b576-a240e42db066";
-const char* mqtt_subscribe_topic  = "/gms/user/5d62be50-ec8f-48f4-b576-a240e42db066";
+const char* mqtt_publish_topic    = getTopic().c_str();
+const char* mqtt_subscribe_topic  = getTopic().c_str();
 
 // Initialize MQTT Client with a plain WiFiClient
 WiFiClient espClient;
@@ -216,10 +206,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     // Handle the message (example: toggle LED)
     if (String(topic) == mqtt_subscribe_topic) {
         if (message == "ON") {
-            digitalWrite(SHELLY_BUILTIN_LED, LOW);
+            // digitalWrite(SHELLY_BUILTIN_LED, LOW);
             Serial.println("LED turned ON via MQTT");
         } else if (message == "OFF") {
-            digitalWrite(SHELLY_BUILTIN_LED, HIGH);
+            // digitalWrite(SHELLY_BUILTIN_LED, HIGH);
             Serial.println("LED turned OFF via MQTT");
         }
     }
@@ -229,19 +219,26 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 bool connectToMQTT() {
     mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
     mqttClient.setCallback(mqttCallback);
+     int randomSessionId = random(1, 201); // Random number from 1 to 200
 
-    String clientId = "ESP8266Client-" + String(WiFi.macAddress()) + "-" + String(storedConfig.deviceId);
-    Serial.println(clientId);
-    Serial.printf("Connecting to MQTT Broker at %s:%d...\n", MQTT_SERVER, MQTT_PORT);
+    String clientId = "ESP8266Client-" + String(WiFi.macAddress()) + "-" + String(storedConfig.deviceId) + "-" + String(randomSessionId);
+    String topic = getTopic();
+
+   
 
     bool connected = mqttClient.connect(clientId.c_str());
 
+    Serial.println("about to connect to mqtt broker with this topic");
+    Serial.println(mqtt_subscribe_topic);
+
     if (connected) {
         Serial.println("Connected to MQTT Broker.");
-        mqttClient.subscribe(mqtt_subscribe_topic);
+        mqttClient.subscribe(topic.c_str());
         Serial.print("Subscribed to topic: ");
-        Serial.println(mqtt_subscribe_topic);
-        mqttClient.publish(mqtt_publish_topic, "ESP8266 Connected");
+        Serial.println(topic);
+        Serial.println(topic.c_str());
+
+        mqttClient.publish(topic.c_str(), "ESP8266 Connected");
         return true;
     } else {
         Serial.print("Failed to connect to MQTT Broker, state: ");
@@ -252,6 +249,8 @@ bool connectToMQTT() {
 
 // Publish Message to MQTT Broker
 void publishMessage(const char* topic, const char* message) {
+
+    Serial.println("about to send message to topic ");
     if (mqttClient.publish(topic, message)) {
         Serial.print("Message published to topic ");
         Serial.print(topic);
@@ -283,6 +282,8 @@ SensorData readSensorData() {
     data.success = true;
 
     REPORT_TEMPHUM(data.temperature, data.humidity);
+
+   
 
     return data;
 }
@@ -937,7 +938,11 @@ void readShellyHTData() {
     // Receive measurements
     double temperature = UNDEFINED, humidity = UNDEFINED;
     if (recvMeasurements(&temperature, &humidity)) {
+        //log out to serial UUART
         REPORT_TEMPHUM(temperature, humidity);
+
+        //send sensor readings to broker
+        sendSensorMessage(temperature, humidity);
     }
 
     // Send additional commands
@@ -1160,3 +1165,122 @@ void sensorLoop(){
     }
     delay(100);
 }
+
+String getDeviceId() {
+    // Temporary storage for the Config struct
+    Config tempConfig;
+
+    // Read data from EEPROM into tempConfig
+    for (size_t i = 0; i < sizeof(Config); ++i) {
+        *((uint8_t*)&tempConfig + i) = EEPROM.read(i);
+    }
+
+    // Calculate checksum
+    uint32_t calculatedChecksum = calculateChecksum(reinterpret_cast<uint8_t*>(&tempConfig), sizeof(Config) - sizeof(uint32_t));
+
+    // Verify checksum
+    if (tempConfig.checksum == calculatedChecksum) {
+        if (strlen(tempConfig.deviceId) == 0) {
+            Serial.println("[EEPROM] DeviceID field is empty.");
+            return String(""); // Return empty string if deviceId is empty
+        }
+
+        Serial.printf("[EEPROM] Retrieved DeviceID: %s\n", tempConfig.deviceId);
+        return String(tempConfig.deviceId);
+    }
+
+    Serial.println("[EEPROM] Invalid configuration or checksum mismatch while retrieving DeviceID.");
+    return String(""); // Return empty string if checksum fails
+}
+
+
+String getUserId() {
+    // Temporary storage for the Config struct
+    Config tempConfig;
+
+    // Read data from EEPROM into tempConfig
+    for (size_t i = 0; i < sizeof(Config); ++i) {
+        *((uint8_t*)&tempConfig + i) = EEPROM.read(i);
+    }
+
+    // Ensure null-termination for UUID
+    tempConfig.uuid[UUID_LENGTH - 1] = '\0';
+
+    // Calculate checksum
+    uint32_t calculatedChecksum = calculateChecksum(reinterpret_cast<uint8_t*>(&tempConfig), sizeof(Config) - sizeof(uint32_t));
+
+    // Verify checksum
+    if (tempConfig.checksum == calculatedChecksum) {
+        if (strlen(tempConfig.uuid) == 0) {
+            Serial.println("[EEPROM] UUID field is empty.");
+            return String(""); // Return empty string if UUID is empty
+        }
+
+        Serial.printf("[EEPROM] Retrieved UUID: %s, Length: %d\n", tempConfig.uuid, strlen(tempConfig.uuid));
+        return String(tempConfig.uuid);
+    }
+
+    Serial.println("[EEPROM] Invalid configuration or checksum mismatch while retrieving UUID.");
+    return String(""); // Return empty string if checksum fails
+}
+
+
+void sendSensorMessage(float temperature, float humidity) {
+
+    // Retrieve necessary IDs
+    String userId = getUserId();
+    String deviceId = getDeviceId();
+    String status = "online";
+    String deviceType = "sensor";
+
+    // Create a JSON document
+    StaticJsonDocument<256> doc;
+
+    // Populate required fields
+    doc["device_id"] = deviceId;
+    doc["user_id"] = userId;
+    doc["status"] = status;
+    doc["device_type"] = deviceType;
+
+    // Populate optional fields if valid
+    if (!isnan(temperature)) {
+        doc["temp_sensor_reading"] = temperature;
+    }
+
+    if (!isnan(humidity)) {
+        doc["humid_sensor_reading"] = humidity;
+    }
+
+    // Serialize JSON to a String
+    String jsonResponse;
+    serializeJson(doc, jsonResponse);
+
+    // Construct dynamic topic: gms/${userId}/${deviceId}
+    String topic = getTopic();
+
+    Serial.println(jsonResponse);
+
+
+    if(mqttClient.connected()){
+
+        if(!mqttClient.subscribe(topic.c_str())){
+            Serial.println("Error Subscribing for some reason");
+        }
+
+        if(!mqttClient.publish(topic.c_str(), jsonResponse.c_str())){
+            Serial.println("Error publishing for some reason");
+            Serial.print("[ERROR] MQTT Publish Failed, State: ");
+            Serial.println(mqttClient.state());
+
+        }
+    } else{
+        Serial.print("Unable to reconnect to mqtt");
+    }
+
+
+    
+
+
+    Serial.println("[MQTT] Payload published successfully");
+}
+

@@ -9,6 +9,8 @@
 #include <string.h>   // for memcpy
 #include <stdlib.h>
 
+#define MQTT_MAX_PACKET_SIZE 512
+
 // Constants
 #define MAX_SSID_LENGTH     32
 #define MAX_PASSWORD_LENGTH 64
@@ -108,7 +110,6 @@ void publishMessage(const char* topic, const char* message);
 
 // Sensor and I²C Function Prototypes
 SensorData readSensorData();
-void initializeSensor();
 void sendHeartbeat();
 uint8_t findI2CAddress();
 void wakeUpSTM32();
@@ -142,6 +143,11 @@ bool misoFrameValid(const uint8_t* frame, uint8_t frame_len);
 void wakeUpSensor();
 void resetLowPowerMCU();
 void setupSTM();
+String getDeviceId();
+void sendSensorMessage(float temperature, float humidity);
+String getTopic();
+String getUserId();
+
 
 void sensorLoop();
 #endif // UTILS_H

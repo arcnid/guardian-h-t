@@ -24,11 +24,11 @@ unsigned long lastWifiRetryAttempt = 0;
 const unsigned long wifiRetryInterval = 30000;
 
 unsigned long lastHeartbeatTime = 0;
-const unsigned long heartbeatInterval = 10000;
+const unsigned long heartbeatInterval = 60000;
 
 // I²C Keep-Alive Timer
 unsigned long lastI2CKeepAliveTime = 0;
-const unsigned long i2cKeepAliveInterval = 15000; // 2 minutes
+const unsigned long i2cKeepAliveInterval = 120000; // 2 minutes
 
 // GPIO Constants
 const uint8_t targetI2CAddress = 0x01;
@@ -60,24 +60,31 @@ void synchronizeTime() {
 
 void setup() {
     Serial.begin(115200);
+    while (!Serial) { ; }
     Serial.println("\nFirmware Started");
+    
+    pinMode(PIN_HSPI_MISO, SPECIAL);
+    pinMode(PIN_HSPI_MOSI, SPECIAL);
+    pinMode(PIN_HSPI_SCLK, SPECIAL);
+    pinMode(PIN_HSPI_CS,   OUTPUT);
+    digitalWrite(PIN_HSPI_CS, HIGH); // De-select chip
 
-    EEPROM.begin(512);
+    pinMode(PIN_RESET, OUTPUT);
+    digitalWrite(PIN_RESET, HIGH); // Keep Shelly's secondary MCU out of reset
 
-     hspiSetup();
+    // Setup the SPI bus at the desired freq & mode
+    hspiSetup();
 
     // Wake the sensor
-    wakeUpSTM32();
+    wakeUpSensor();
 
     // Initialize sensor settings
     sendCmd_PreventSleep();
     sendCmd_LED(LED_STATUS_BLINK_SLOW);
 
-    // Initialize HTS221 sensor
-    initializeSensor();
+    EEPROM.begin(512);
 
-    pinMode(SHELLY_BUILTIN_LED, OUTPUT);
-    digitalWrite(SHELLY_BUILTIN_LED, HIGH);
+    
 
     if (checkForWifiAndUser()) {
         if (connectToWiFi(String(storedConfig.ssid), String(storedConfig.password))) {
@@ -110,11 +117,7 @@ void setup() {
         }
     }
 
-    initializeSensor();
-
     // Initialize I²C
-    Wire.begin(sdaPin, sclPin);
-    Serial.println("I²C Initialized for Keep-Alive.");
 }
 
 void keepAliveI2C() {
@@ -132,6 +135,9 @@ void loop() {
     server.handleClient();
     unsigned long currentMillis = millis();
 
+    
+    
+    
 
     // WiFi Reconnect
     if (doesUserExist && (WiFi.status() != WL_CONNECTED)) {
@@ -140,7 +146,7 @@ void loop() {
             Serial.println("Attempting to reconnect to WiFi...");
             if (connectToWiFi(String(storedConfig.ssid), String(storedConfig.password))) {
                 Serial.println("Reconnected to WiFi successfully.");
-                digitalWrite(SHELLY_BUILTIN_LED, HIGH);
+                // digitalWrite(SHELLY_BUILTIN_LED, HIGH);
                 synchronizeTime();
 
                 if (!mqttClient.connected()) {
@@ -171,26 +177,22 @@ void loop() {
         }
         mqttClient.loop();
 
-        if (currentMillis - lastPublishTime >= publishInterval) {
-            lastPublishTime = currentMillis;
-            String status = "Device is online. IP: " + WiFi.localIP().toString();
-            publishMessage(mqtt_publish_topic, status.c_str());
+        static unsigned long lastAttempt = 0;
+        unsigned long now = millis();
+        if (now - lastAttempt >= 5000) { // Every 5 seconds
+            lastAttempt = now;
+            readShellyHTData();
         }
+        delay(100);
+
+        // if (currentMillis - lastPublishTime >= publishInterval) {
+        //     lastPublishTime = currentMillis;
+        //     String status = "Device is online. IP: " + WiFi.localIP().toString();
+        //     publishMessage(mqtt_publish_topic, status.c_str());
+        // }
     }
 
-    // Heartbeat Signal
-    if (currentMillis - lastHeartbeatTime >= heartbeatInterval) {
-        lastHeartbeatTime = currentMillis;
-        sensorLoop();
+    
 
-    }
-
-    // I²C Keep-Alive Every 2 Minutes
-    // if (currentMillis - lastI2CKeepAliveTime >= i2cKeepAliveInterval) {
-    //     lastI2CKeepAliveTime = currentMillis;
-    //     keepAliveI2C();
-    //     //scan the temp and humidity and print it out in a readable format 
-    //      readShellyHTData();
-    // }
-
+    
 }
