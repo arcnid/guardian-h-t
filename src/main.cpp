@@ -78,13 +78,13 @@ void setup() {
     // Wake the sensor
     wakeUpSensor();
 
+
     // Initialize sensor settings
     sendCmd_PreventSleep();
     sendCmd_LED(LED_STATUS_BLINK_SLOW);
 
     EEPROM.begin(512);
 
-    
 
     if (checkForWifiAndUser()) {
         if (connectToWiFi(String(storedConfig.ssid), String(storedConfig.password))) {
@@ -135,10 +135,6 @@ void loop() {
     server.handleClient();
     unsigned long currentMillis = millis();
 
-    
-    
-    
-
     // WiFi Reconnect
     if (doesUserExist && (WiFi.status() != WL_CONNECTED)) {
         if (currentMillis - lastWifiRetryAttempt > wifiRetryInterval) {
@@ -179,20 +175,13 @@ void loop() {
 
         static unsigned long lastAttempt = 0;
         unsigned long now = millis();
-        if (now - lastAttempt >= 5000) { // Every 5 seconds
+        if (now - lastAttempt >= 60000) { // Every 5 seconds
             lastAttempt = now;
             readShellyHTData();
         }
         delay(100);
 
-        // if (currentMillis - lastPublishTime >= publishInterval) {
-        //     lastPublishTime = currentMillis;
-        //     String status = "Device is online. IP: " + WiFi.localIP().toString();
-        //     publishMessage(mqtt_publish_topic, status.c_str());
-        // }
+      
     }
-
-    
-
     
 }
