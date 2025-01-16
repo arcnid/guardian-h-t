@@ -221,30 +221,59 @@ void clearEEPROM() {
     }
     EEPROM.commit();
     Serial.println("EEPROM cleared.");
+    ESP.restart();
+}
+
+void restart(){
+    ESP.restart();
+}
+
+void sendStatus(){
+    Serial.print("online");
 }
 
 // MQTT Callback Function to Handle Incoming Messages
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    Serial.print("Message arrived on topic: ");
-    Serial.println(topic);
+  Serial.print("Message arrived on topic: ");
+  Serial.println(topic);
 
-    String message;
-    for (unsigned int i = 0; i < length; i++) {
-        message += (char)payload[i];
-    }
-    Serial.print("Message: ");
-    Serial.println(message);
+  // Convert payload to a string
+  String message;
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.print("Message: ");
+  Serial.println(message);
 
-    // Handle the message (example: toggle LED)
-    if (String(topic) == mqtt_subscribe_topic) {
-        if (message == "ON") {
-            // digitalWrite(SHELLY_BUILTIN_LED, LOW);
-            Serial.println("LED turned ON via MQTT");
-        } else if (message == "OFF") {
-            // digitalWrite(SHELLY_BUILTIN_LED, HIGH);
-            Serial.println("LED turned OFF via MQTT");
-        }
+  // Parse the JSON message
+  StaticJsonDocument<256> doc; // Adjust buffer size as needed
+
+  DeserializationError error = deserializeJson(doc, message);
+  if (error) {
+    Serial.print("Failed to parse JSON: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  // Dispatch based on the "command" field in JSON
+  if (doc.containsKey("command")) {
+    String command = doc["command"];
+    Serial.print("Command received: ");
+    Serial.println(command);
+
+    // Map commands to specific function calls
+    if (command == "restart") {
+      restart();
+    } else if (command == "clearEEPROM") {
+      clearEEPROM();
+    } else if (command == "status") {
+      sendStatus();
+    } else {
+      Serial.println("Unknown command received.");
     }
+  } else {
+    Serial.println("JSON does not contain 'command' key.");
+  }
 }
 
 // Connect to MQTT Broker
