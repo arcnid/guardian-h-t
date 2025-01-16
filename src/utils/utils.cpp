@@ -1,6 +1,6 @@
 // src/utils.cpp
 #include "utils.h"
-#include "secrets.h" // Include secrets.h for MQTT credentials
+#include "secrets.h" 
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <ESP8266WiFi.h>
@@ -9,7 +9,7 @@
 #include <Wire.h>
 #include <HTS221Sensor.h>
 #include <SPI.h>
-#include <string.h>   // for memcpy
+#include <string.h> 
 #include <stdlib.h>
 #include <cmath>
 #include <ArduinoJson.h>
@@ -22,7 +22,6 @@ String getTopic(){
     String userId = getUserId();
     String deviceId = getDeviceId();
 
-
     String topic = "gms/" + userId + "/" + deviceId;
 
     return topic;
@@ -30,10 +29,7 @@ String getTopic(){
 }
 
 
-// For testing with a public broker that doesn't require TLS:
-// Example: HiveMQ public broker
-// MQTT_SERVER = "broker.hivemq.com"
-// MQTT_PORT = 1883
+
 const char* mqtt_publish_topic    = getTopic().c_str();
 const char* mqtt_subscribe_topic  = getTopic().c_str();
 
@@ -65,6 +61,35 @@ bool saveUserAndWifiCreds(const String& ssid, const String& password, const Stri
     uuid.toCharArray(storedConfig.uuid, UUID_LENGTH);
     deviceId.toCharArray(storedConfig.deviceId, DEVICEID_LENGTH);
 
+    // Ensure null-termination (just to be safe)
+    storedConfig.ssid[MAX_SSID_LENGTH - 1] = '\0';
+    storedConfig.password[MAX_PASSWORD_LENGTH - 1] = '\0';
+    storedConfig.uuid[UUID_LENGTH - 1] = '\0';
+    storedConfig.deviceId[DEVICEID_LENGTH - 1] = '\0';
+
+    // ✅ Verify each field after copying
+    if (String(storedConfig.ssid) != ssid) {
+        Serial.println("[ERROR] SSID mismatch after copying to storedConfig.");
+        return false;
+    }
+
+    if (String(storedConfig.password) != password) {
+        Serial.println("[ERROR] Password mismatch after copying to storedConfig.");
+        return false;
+    }
+
+    if (String(storedConfig.uuid) != uuid) {
+        Serial.println("[ERROR] UUID mismatch after copying to storedConfig.");
+        return false;
+    }
+
+    if (String(storedConfig.deviceId) != deviceId) {
+        Serial.println("[ERROR] Device ID mismatch after copying to storedConfig.");
+        return false;
+    }
+
+    Serial.println("[SUCCESS] All fields verified successfully.");
+
     // Calculate checksum excluding the checksum field itself
     storedConfig.checksum = 0;
     storedConfig.checksum = calculateChecksum(reinterpret_cast<uint8_t*>(&storedConfig), sizeof(Config) - sizeof(uint32_t));
@@ -76,10 +101,10 @@ bool saveUserAndWifiCreds(const String& ssid, const String& password, const Stri
 
     // Commit changes to EEPROM
     if (EEPROM.commit()) {
-        Serial.println("Configuration saved to EEPROM successfully.");
+        Serial.println("[EEPROM] Configuration saved successfully.");
         return true;
     } else {
-        Serial.println("Failed to commit EEPROM changes.");
+        Serial.println("[EEPROM] Failed to commit changes.");
         return false;
     }
 }
@@ -91,6 +116,12 @@ bool checkForWifiAndUser() {
         *((uint8_t*)&storedConfig + i) = EEPROM.read(i);
     }
 
+    // Ensure null-termination for UUID and DeviceID
+    storedConfig.uuid[UUID_LENGTH - 1] = '\0';
+    storedConfig.deviceId[DEVICEID_LENGTH - 1] = '\0';
+    storedConfig.ssid[MAX_SSID_LENGTH - 1] = '\0';
+    storedConfig.password[MAX_PASSWORD_LENGTH - 1] = '\0';
+
     // Calculate checksum of the read data
     uint32_t calculatedChecksum = calculateChecksum(reinterpret_cast<uint8_t*>(&storedConfig), sizeof(Config) - sizeof(uint32_t));
 
@@ -99,24 +130,25 @@ bool checkForWifiAndUser() {
         // Check if all required fields are non-empty
         if (strlen(storedConfig.ssid) == 0 || strlen(storedConfig.password) == 0 ||
             strlen(storedConfig.uuid) == 0 || strlen(storedConfig.deviceId) == 0) {
-            Serial.println("Configuration found but one or more fields are empty.");
+            Serial.println("[EEPROM] Configuration found, but one or more fields are empty.");
             doesUserExist = false;
             return false;
         }
 
-        Serial.println("Valid configuration found in EEPROM.");
+        Serial.println("[EEPROM] Valid configuration found.");
         Serial.printf("SSID: %s\n", storedConfig.ssid);
-        Serial.printf("UUID: %s\n", storedConfig.uuid);
-        Serial.printf("DeviceID: %s\n", storedConfig.deviceId);
+        Serial.printf("UUID: %s, Length: %d\n", storedConfig.uuid, strlen(storedConfig.uuid));
+        Serial.printf("DeviceID: %s, Length: %d\n", storedConfig.deviceId, strlen(storedConfig.deviceId));
 
         doesUserExist = true;
         return true;
     } else {
-        Serial.println("Invalid or no configuration found in EEPROM.");
+        Serial.println("[EEPROM] Invalid or no configuration found.");
         doesUserExist = false;
         return false;
     }
 }
+
 
 // Send HTTP Response with CORS Headers
 void sendResponse(ESP8266WebServer &server, int statusCode, const String &content) {
@@ -250,7 +282,6 @@ bool connectToMQTT() {
 // Publish Message to MQTT Broker
 void publishMessage(const char* topic, const char* message) {
 
-    Serial.println("about to send message to topic ");
     if (mqttClient.publish(topic, message)) {
         Serial.print("Message published to topic ");
         Serial.print(topic);
@@ -282,8 +313,6 @@ SensorData readSensorData() {
     data.success = true;
 
     REPORT_TEMPHUM(data.temperature, data.humidity);
-
-   
 
     return data;
 }
@@ -1175,6 +1204,9 @@ String getDeviceId() {
         *((uint8_t*)&tempConfig + i) = EEPROM.read(i);
     }
 
+    // Ensure null-termination for DeviceID
+    tempConfig.deviceId[DEVICEID_LENGTH - 1] = '\0';
+
     // Calculate checksum
     uint32_t calculatedChecksum = calculateChecksum(reinterpret_cast<uint8_t*>(&tempConfig), sizeof(Config) - sizeof(uint32_t));
 
@@ -1182,16 +1214,16 @@ String getDeviceId() {
     if (tempConfig.checksum == calculatedChecksum) {
         if (strlen(tempConfig.deviceId) == 0) {
             Serial.println("[EEPROM] DeviceID field is empty.");
-            return String(""); // Return empty string if deviceId is empty
+            return String(""); // Return empty string if DeviceID is empty
         }
 
-        Serial.printf("[EEPROM] Retrieved DeviceID: %s\n", tempConfig.deviceId);
         return String(tempConfig.deviceId);
     }
 
     Serial.println("[EEPROM] Invalid configuration or checksum mismatch while retrieving DeviceID.");
     return String(""); // Return empty string if checksum fails
 }
+
 
 
 String getUserId() {
@@ -1216,7 +1248,6 @@ String getUserId() {
             return String(""); // Return empty string if UUID is empty
         }
 
-        Serial.printf("[EEPROM] Retrieved UUID: %s, Length: %d\n", tempConfig.uuid, strlen(tempConfig.uuid));
         return String(tempConfig.uuid);
     }
 
@@ -1257,9 +1288,6 @@ void sendSensorMessage(float temperature, float humidity) {
 
     // Construct dynamic topic: gms/${userId}/${deviceId}
     String topic = getTopic();
-
-    Serial.println(jsonResponse);
-
 
     if(mqttClient.connected()){
 

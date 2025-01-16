@@ -2,8 +2,8 @@
 #ifndef SECRETS_H
 #define SECRETS_H
 
-#define MQTT_SERVER "8.tcp.ngrok.io"
-#define MQTT_PORT 19924
+#define MQTT_SERVER "54.172.46.137"
+#define MQTT_PORT 1883
 
 
 #endif // SECRETS_H
