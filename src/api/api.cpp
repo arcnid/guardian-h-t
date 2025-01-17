@@ -164,7 +164,7 @@ void setupApiRoutes(ESP8266WebServer &server) {
                 sendResponse(server, 500, "{\"status\":\"Error\", \"message\":\"Failed to save configuration\"}");
             
             }
-            sendResponse(server, 200, "{\"status\":\"Success\", \"message\":\"Connected to Wi-Fi\"}");
+            sendResponse(server, 200, "{\"status\":\"Success\", \"message\":\"Connected to Wi-Fi\", \"device_type\":\"sensor\"}");
 
             //initiate database intitialization handshake
 
