@@ -18,11 +18,33 @@
 Config storedConfig;
 HTS221Sensor sensor(&Wire);
 
-String getTopic(){
+String getPubTopic(){
     String userId = getUserId();
     String deviceId = getDeviceId();
 
-    String topic = "gms/" + userId + "/" + deviceId;
+    Serial.println("Getting pub topic String");
+    Serial.println(userId);
+
+
+    String topic = "/toDaemon/" + userId + "/" + deviceId;
+
+    Serial.println(topic);
+
+    return topic;
+
+}
+
+String getSubTopic(){
+    String userId = getUserId();
+    String deviceId = getDeviceId();
+
+    String topic = "/toDevice/" + userId + "/" + deviceId;
+
+    Serial.println("Getting sub topic String");
+    Serial.println(userId);
+
+    Serial.println(topic);
+
 
     return topic;
 
@@ -30,8 +52,8 @@ String getTopic(){
 
 
 
-const char* mqtt_publish_topic    = getTopic().c_str();
-const char* mqtt_subscribe_topic  = getTopic().c_str();
+const char* mqtt_publish_topic    = getPubTopic().c_str();
+const char* mqtt_subscribe_topic  = getSubTopic().c_str();
 
 // Initialize MQTT Client with a plain WiFiClient
 WiFiClient espClient;
@@ -280,10 +302,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 bool connectToMQTT() {
     mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
     mqttClient.setCallback(mqttCallback);
-     int randomSessionId = random(1, 201); // Random number from 1 to 200
+    int randomSessionId = random(1, 201); // Random number from 1 to 200
 
     String clientId = "ESP8266Client-" + String(WiFi.macAddress()) + "-" + String(storedConfig.deviceId) + "-" + String(randomSessionId);
-    String topic = getTopic();
+    String pubTopic = getPubTopic().c_str();
+    String subTopic = getSubTopic().c_str();
 
    
 
@@ -294,12 +317,12 @@ bool connectToMQTT() {
 
     if (connected) {
         Serial.println("Connected to MQTT Broker.");
-        mqttClient.subscribe(topic.c_str());
+        mqttClient.subscribe(getSubTopic().c_str());
         Serial.print("Subscribed to topic: ");
-        Serial.println(topic);
-        Serial.println(topic.c_str());
+        Serial.println(getSubTopic().c_str());
+    
 
-        mqttClient.publish(topic.c_str(), "ESP8266 Connected");
+        // mqttClient.publish(topic.c_str(), "ESP8266 Connected");
         return true;
     } else {
         Serial.print("Failed to connect to MQTT Broker, state: ");
@@ -1315,16 +1338,14 @@ void sendSensorMessage(float temperature, float humidity) {
     String jsonResponse;
     serializeJson(doc, jsonResponse);
 
-    // Construct dynamic topic: gms/${userId}/${deviceId}
-    String topic = getTopic();
 
     if(mqttClient.connected()){
 
-        if(!mqttClient.subscribe(topic.c_str())){
+        if(!mqttClient.subscribe(getSubTopic().c_str())){
             Serial.println("Error Subscribing for some reason");
         }
 
-        if(!mqttClient.publish(topic.c_str(), jsonResponse.c_str())){
+        if(!mqttClient.publish(getPubTopic().c_str(), jsonResponse.c_str())){
             Serial.println("Error publishing for some reason");
             Serial.print("[ERROR] MQTT Publish Failed, State: ");
             Serial.println(mqttClient.state());
@@ -1333,10 +1354,6 @@ void sendSensorMessage(float temperature, float humidity) {
     } else{
         Serial.print("Unable to reconnect to mqtt");
     }
-
-
-    
-
 
     Serial.println("[MQTT] Payload published successfully");
 }

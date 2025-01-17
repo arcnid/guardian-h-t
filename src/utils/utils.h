@@ -145,7 +145,8 @@ void resetLowPowerMCU();
 void setupSTM();
 String getDeviceId();
 void sendSensorMessage(float temperature, float humidity);
-String getTopic();
+String getPubTopic();
+String getSubTopic();
 String getUserId();
 
 
